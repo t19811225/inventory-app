@@ -26,8 +26,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   initScanTab();
   initModals();
   initSettings();
+  initFirebaseUI();
   registerSW();
 });
+
+function initFirebaseUI() {
+  document.getElementById('btnGoogleLogin').addEventListener('click', googleLogin);
+  document.getElementById('btnLogout').addEventListener('click', logout);
+}
 
 async function registerSW() {
   if ('serviceWorker' in navigator) {
@@ -175,7 +181,7 @@ function initModals() {
     if (!name) return toast('請填寫品項名稱');
     const barcode = document.getElementById('npBarcode').value.trim();
     const price = parseFloat(document.getElementById('npPrice').value) || 0;
-    await dbAdd('products', { name, barcode, price });
+    await syncAdd('products', { name, barcode, price });
     allProducts = await dbGetAll('products');
     closeModal('productModal');
     toast('已新增：' + name);
@@ -186,7 +192,8 @@ function initModals() {
     const id = parseInt(document.getElementById('editProductId').value);
     const name = document.getElementById('epName').value.trim();
     if (!name) return toast('請填寫品項名稱');
-    await dbPut('products', { id, name, barcode: document.getElementById('epBarcode').value.trim(), price: parseFloat(document.getElementById('epPrice').value) || 0 });
+    const existingProd = allProducts.find(x => x.id === id);
+    await syncPut('products', { ...existingProd, id, name, barcode: document.getElementById('epBarcode').value.trim(), price: parseFloat(document.getElementById('epPrice').value) || 0 });
     allProducts = await dbGetAll('products');
     closeModal('editProductModal');
     refreshSettingsLists();
@@ -198,7 +205,7 @@ function initModals() {
     const id = parseInt(document.getElementById('editProductId').value);
     const ok = await showConfirm('刪除品項', '確定要刪除此品項嗎？');
     if (!ok) return;
-    await dbDelete('products', id);
+    await syncDelete('products', id);
     allProducts = await dbGetAll('products');
     closeModal('editProductModal');
     refreshSettingsLists();
@@ -211,7 +218,7 @@ function initModals() {
     const region = document.getElementById('ncRegion').value;
     if (!name) return toast('請填寫客戶名稱');
     if (!region) return toast('請選擇區域');
-    await dbAdd('clients', { name, region });
+    await syncAdd('clients', { name, region });
     allClients = await dbGetAll('clients');
     populateRegionSelects();
     filterClients();
@@ -225,7 +232,8 @@ function initModals() {
     const name = document.getElementById('ecName').value.trim();
     const region = document.getElementById('ecRegion').value;
     if (!name) return toast('請填寫客戶名稱');
-    await dbPut('clients', { id, name, region });
+    const existingClient = allClients.find(x => x.id === id);
+    await syncPut('clients', { ...existingClient, id, name, region });
     allClients = await dbGetAll('clients');
     populateRegionSelects();
     filterClients();
@@ -239,7 +247,7 @@ function initModals() {
     const id = parseInt(document.getElementById('editClientId').value);
     const ok = await showConfirm('刪除客戶', '確定要刪除此客戶嗎？');
     if (!ok) return;
-    await dbDelete('clients', id);
+    await syncDelete('clients', id);
     allClients = await dbGetAll('clients');
     populateRegionSelects();
     filterClients();
@@ -515,7 +523,7 @@ async function saveRecord() {
     savedAt: new Date().toISOString()
   };
 
-  await dbAdd('records', record);
+  await syncAdd('records', record);
   toast('盤點紀錄已儲存！');
 }
 
@@ -699,7 +707,9 @@ function initSettings() {
       allProducts = await dbGetAll('products');
       populateRegionSelects();
       filterClients();
-      toast('資料已匯入');
+      // 匯入後同步到 Firebase
+      if (typeof uploadAllToFirebase === 'function') await uploadAllToFirebase();
+      toast('資料已匯入並同步');
     } catch(err) { toast('匯入失敗: ' + err.message); }
     e.target.value = '';
   });
@@ -722,7 +732,7 @@ function initSettings() {
     const name = document.getElementById('newRegionName').value.trim();
     if (!name) return toast('請輸入區域名稱');
     try {
-      await dbAdd('regions', { name });
+      await syncAdd('regions', { name });
       allRegions = await dbGetAll('regions');
       populateRegionSelects();
       document.getElementById('newRegionName').value = '';
@@ -751,7 +761,7 @@ function refreshSettingsLists() {
   rl.querySelectorAll('[data-delrgn]').forEach(b => b.addEventListener('click', async () => {
     const ok = await showConfirm('刪除區域', '確定刪除此區域嗎？');
     if (!ok) return;
-    await dbDelete('regions', parseInt(b.dataset.delrgn));
+    await syncDelete('regions', parseInt(b.dataset.delrgn));
     allRegions = await dbGetAll('regions');
     populateRegionSelects();
     refreshSettingsLists();
@@ -776,7 +786,7 @@ function refreshSettingsLists() {
     if (!c) return;
     const ok = await showConfirm('刪除客戶', '確定刪除「' + c.name + '」嗎？');
     if (!ok) return;
-    await dbDelete('clients', c.id);
+    await syncDelete('clients', c.id);
     allClients = await dbGetAll('clients');
     populateRegionSelects();
     filterClients();
@@ -803,7 +813,7 @@ function refreshSettingsLists() {
     if (!p) return;
     const ok = await showConfirm('刪除產品', '確定刪除「' + p.name + '」嗎？');
     if (!ok) return;
-    await dbDelete('products', p.id);
+    await syncDelete('products', p.id);
     allProducts = await dbGetAll('products');
     refreshSettingsLists();
     toast('已刪除：' + p.name);
