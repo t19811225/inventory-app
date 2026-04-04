@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>庫存盤點系統</title>
+<link rel="manifest" href="manifest.json">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- 頂部標題列 -->
+<div class="app-header">
+  <div class="app-title">庫存盤點系統</div>
+  <div class="header-actions">
+    <button class="header-btn" id="btnHeaderAddProduct">+ 品項</button>
+    <button class="header-btn" id="btnHeaderAddClient">+ 客戶</button>
+    <button class="header-btn" id="btnHeaderSettings">設定</button>
+  </div>
+</div>
+
+<!-- 資訊列 -->
+<div class="info-bar">
+  <div class="info-field">
+    <span class="info-label">區域</span>
+    <select id="regionSelect"><option value="">— 全部區域 —</option></select>
+  </div>
+  <div class="info-field">
+    <span class="info-label">客戶名稱 <span class="client-count" id="clientCountLabel"></span></span>
+    <select id="clientSelect"><option value="">— 選擇客戶 —</option></select>
+  </div>
+  <div class="info-field full">
+    <span class="info-label">盤點日期</span>
+    <input type="date" id="checkDate">
+  </div>
+</div>
+
+<!-- 分頁標籤 -->
+<div class="tab-nav">
+  <button class="tab-btn active" data-tab="scan"><span class="tab-icon">&#128247;</span>掃碼盤點</button>
+  <button class="tab-btn" data-tab="compare"><span class="tab-icon">&#128202;</span>即時比較</button>
+  <button class="tab-btn" data-tab="yearly"><span class="tab-icon">&#128197;</span>年度分析</button>
+  <button class="tab-btn" data-tab="history"><span class="tab-icon">&#128203;</span>歷史紀錄</button>
+</div>
+
+<!-- TAB: 掃碼盤點 -->
+<div id="tab-scan" class="tab-content active">
+  <div class="scan-card">
+    <div id="scanner-container">
+      <div class="scan-overlay"><div class="scan-frame"></div></div>
+    </div>
+    <div class="scan-actions">
+      <button class="btn btn-primary" id="scanToggle">開啟掃碼</button>
+      <button class="btn btn-secondary" id="btnTogglePicker">選擇品項</button>
+    </div>
+    <div class="manual-row">
+      <input type="text" id="manualBarcode" placeholder="手動輸入條碼..." inputmode="numeric">
+      <button class="btn btn-sm btn-primary" id="btnManualAdd">加入</button>
+    </div>
+    <!-- 品項快速選擇 -->
+    <div id="productPicker" style="display:none;">
+      <div class="search-row">
+        <input type="text" id="productSearchInPicker" placeholder="搜尋品項名稱...">
+      </div>
+      <div class="product-grid" id="productGrid"></div>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <div class="section-title">盤點清單</div>
+    <span class="count-badge" id="itemCount">0 項</span>
+  </div>
+
+  <div id="scanList">
+    <div class="empty">
+      <div class="empty-icon">&#128247;</div>
+      <p>尚未掃描任何商品</p>
+      <span class="sub">開啟掃碼或點擊「選擇品項」開始盤點</span>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: 即時比較 -->
+<div id="tab-compare" class="tab-content">
+  <div id="compareView">
+    <div class="empty">
+      <div class="empty-icon">&#128202;</div>
+      <p>請先掃描商品</p>
+      <span class="sub">掃描後可即時比較上次叫貨資料</span>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: 年度分析 -->
+<div id="tab-yearly" class="tab-content">
+  <div id="yearlyView">
+    <div class="empty">
+      <div class="empty-icon">&#128197;</div>
+      <p>請先選擇客戶</p>
+      <span class="sub">選擇客戶後即可查看年度分析</span>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: 歷史紀錄 -->
+<div id="tab-history" class="tab-content">
+  <div id="historyView">
+    <div class="empty">
+      <div class="empty-icon">&#128203;</div>
+      <p>請先選擇客戶</p>
+      <span class="sub">選擇客戶後可查看歷史紀錄</span>
+    </div>
+  </div>
+</div>
+
+<!-- 浮動儲存按鈕 -->
+<button class="save-float" id="btnSaveRecord" title="儲存本次盤點">&#128190;</button>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 新增品項 Modal -->
+<div class="modal-bg" id="productModal">
+  <div class="modal">
+    <h3>新增品項</h3>
+    <div class="fg">
+      <label>品項名稱</label>
+      <input type="text" id="npName" placeholder="例：皇家葉酸(36)">
+    </div>
+    <div class="fg">
+      <label>條碼（選填）</label>
+      <input type="text" id="npBarcode" placeholder="若無條碼可留空" inputmode="numeric">
+    </div>
+    <div class="fg">
+      <label>單價（選填）</label>
+      <input type="number" id="npPrice" placeholder="0" min="0">
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" data-close="productModal">取消</button>
+      <button class="btn btn-primary" id="btnSaveProduct">確認新增</button>
+    </div>
+  </div>
+</div>
+
+<!-- 編輯品項 Modal -->
+<div class="modal-bg" id="editProductModal">
+  <div class="modal">
+    <h3 id="editProductTitle">編輯品項</h3>
+    <input type="hidden" id="editProductId">
+    <div class="fg">
+      <label>品項名稱</label>
+      <input type="text" id="epName">
+    </div>
+    <div class="fg">
+      <label>條碼</label>
+      <input type="text" id="epBarcode" inputmode="numeric">
+    </div>
+    <div class="fg">
+      <label>單價</label>
+      <input type="number" id="epPrice" min="0">
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" data-close="editProductModal">取消</button>
+      <button class="btn btn-danger btn-sm" id="btnDeleteProduct">刪除</button>
+      <button class="btn btn-primary" id="btnUpdateProduct">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新增客戶 Modal -->
+<div class="modal-bg" id="clientModal">
+  <div class="modal">
+    <h3>新增客戶</h3>
+    <div class="fg">
+      <label>區域</label>
+      <select id="ncRegion"></select>
+    </div>
+    <div class="fg">
+      <label>客戶名稱</label>
+      <input type="text" id="ncName" placeholder="例：大家好雜貨店">
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" data-close="clientModal">取消</button>
+      <button class="btn btn-primary" id="btnSaveClient">確認新增</button>
+    </div>
+  </div>
+</div>
+
+<!-- 編輯客戶 Modal -->
+<div class="modal-bg" id="editClientModal">
+  <div class="modal">
+    <h3>編輯客戶</h3>
+    <input type="hidden" id="editClientId">
+    <div class="fg">
+      <label>區域</label>
+      <select id="ecRegion"></select>
+    </div>
+    <div class="fg">
+      <label>客戶名稱</label>
+      <input type="text" id="ecName">
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" data-close="editClientModal">取消</button>
+      <button class="btn btn-danger btn-sm" id="btnDeleteClient">刪除</button>
+      <button class="btn btn-primary" id="btnUpdateClient">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 設定 Modal -->
+<div class="modal-bg" id="settingsModal">
+  <div class="modal">
+    <h3>系統設定</h3>
+    <div class="fg">
+      <button class="btn btn-secondary btn-block" id="btnExport">匯出資料 (JSON)</button>
+    </div>
+    <div class="fg">
+      <button class="btn btn-secondary btn-block" id="btnImport">匯入資料</button>
+      <input type="file" id="importFile" accept=".json" style="display:none">
+    </div>
+    <div class="fg">
+      <button class="btn btn-secondary btn-block" id="btnExportCSV">匯出盤點紀錄 (CSV)</button>
+    </div>
+    <div class="divider"></div>
+    <div class="fg">
+      <label>區域管理</label>
+      <div class="region-add-row">
+        <input type="text" id="newRegionName" placeholder="新增區域名稱">
+        <button class="btn btn-sm btn-primary" id="btnAddRegion">新增</button>
+      </div>
+      <div id="regionList" class="region-list"></div>
+    </div>
+    <div class="divider"></div>
+    <div class="fg">
+      <label>客戶管理</label>
+      <div class="client-manage-list" id="clientManageList"></div>
+    </div>
+    <div class="divider"></div>
+    <div class="fg">
+      <label>產品管理</label>
+      <div class="product-manage-list" id="productManageList"></div>
+    </div>
+    <div class="divider"></div>
+    <div class="fg danger-zone">
+      <button class="btn btn-danger btn-block" id="btnClearData">清除所有資料</button>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary btn-block" data-close="settingsModal">關閉</button>
+    </div>
+    <p class="version-info">庫存盤點系統 v2.0 PWA | 資料儲存於本機</p>
+  </div>
+</div>
+
+<!-- 確認對話框 -->
+<div class="modal-bg" id="confirmModal">
+  <div class="modal">
+    <h3 id="confirmTitle">確認</h3>
+    <p id="confirmMsg"></p>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" id="btnConfirmNo">取消</button>
+      <button class="btn btn-danger" id="btnConfirmYes">確認</button>
+    </div>
+  </div>
+</div>
+
+<!-- 效期拍照 Modal -->
+<div class="modal-bg" id="expiryCamModal">
+  <div class="modal">
+    <h3>拍照辨識效期</h3>
+    <video id="expiryCamPreview" autoplay playsinline></video>
+    <div class="ocr-result" id="ocrResult">等待拍照...</div>
+    <div class="ocr-hint">將相機對準效期日期，點擊「拍照辨識」</div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" id="btnCloseExpiryCam">取消</button>
+      <button class="btn btn-primary" id="btnCaptureExpiry">拍照辨識</button>
+    </div>
+    <div class="modal-btns" id="ocrConfirm" style="display:none;">
+      <button class="btn btn-success btn-block" id="btnConfirmOCR">確認使用此日期</button>
+    </div>
+  </div>
+</div>
+
+<canvas id="ocrCanvas" style="display:none;"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script src="js/db.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
