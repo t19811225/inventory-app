@@ -1,12 +1,12 @@
-const CACHE_NAME = 'inventory-v1';
+const CACHE_NAME = 'inventory-v2';
 const ASSETS = [
   './',
   './index.html',
   './css/style.css',
   './js/db.js',
   './js/app.js',
-  './manifest.json',
-  'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js'
+  './js/firebase-sync.js',
+  './manifest.json'
 ];
 
 self.addEventListener('install', e => {
@@ -24,7 +24,12 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  // Firebase 和外部 CDN 不走快取
+  if (e.request.url.includes('firebase') || e.request.url.includes('gstatic') || e.request.url.includes('googleapis')) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./index.html')))
+    fetch(e.request).catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
   );
 });
