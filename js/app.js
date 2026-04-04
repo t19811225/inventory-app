@@ -458,27 +458,111 @@ function openExpiryCam(pid) {
     .catch(() => toast('無法開啟相機'));
 }
 
-function captureExpiry() {
+async function captureExpiry() {
   const video = document.getElementById('expiryCamPreview');
   const canvas = document.getElementById('ocrCanvas');
   const result = document.getElementById('ocrResult');
+  const confirmBtn = document.getElementById('ocrConfirm');
+
   canvas.width = video.videoWidth || 320;
   canvas.height = video.videoHeight || 240;
   canvas.getContext('2d').drawImage(video, 0, 0);
-  result.textContent = '辨識中...';
+
+  result.textContent = '辨識中，請稍候...';
   result.style.color = 'var(--text-dim)';
-  // 簡易 OCR 模擬 - 實際可整合 Tesseract.js
-  setTimeout(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + Math.floor(Math.random() * 18) + 3);
-    const yr = d.getFullYear();
-    const mo = String(d.getMonth()+1).padStart(2,'0');
-    const dy = String(d.getDate()).padStart(2,'0');
-    result.textContent = `${yr}/${mo}/${dy}`;
-    result.style.color = 'var(--accent)';
-    result.dataset.date = `${yr}-${mo}-${dy}`;
-    document.getElementById('ocrConfirm').style.display = 'flex';
-  }, 1200);
+  confirmBtn.style.display = 'none';
+
+  try {
+    // 使用 Tesseract.js 進行 OCR 辨識
+    const { data } = await Tesseract.recognize(canvas, 'eng', {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          result.textContent = '辨識中... ' + Math.round(m.progress * 100) + '%';
+        }
+      }
+    });
+
+    const text = data.text;
+    // 嘗試從辨識文字中提取日期
+    const dateStr = extractDate(text);
+
+    if (dateStr) {
+      result.textContent = dateStr.display;
+      result.style.color = 'var(--accent)';
+      result.dataset.date = dateStr.value;
+      confirmBtn.style.display = 'flex';
+    } else {
+      result.textContent = '未能辨識日期，請重試';
+      result.style.color = 'var(--danger)';
+      // 顯示原始辨識文字供參考
+      if (text.trim()) {
+        result.textContent += '\n辨識到: ' + text.trim().substring(0, 50);
+      }
+    }
+  } catch (e) {
+    console.error('OCR error:', e);
+    result.textContent = '辨識失敗，請手動輸入';
+    result.style.color = 'var(--danger)';
+  }
+}
+
+// 從 OCR 文字中提取日期
+function extractDate(text) {
+  // 清理文字
+  const clean = text.replace(/[oO]/g, '0').replace(/[lI]/g, '1').replace(/[sS]/g, '5').replace(/[bB]/g, '6');
+
+  // 常見日期格式
+  const patterns = [
+    // 2027/03/26 or 2027.03.26 or 2027-03-26
+    /(\d{4})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{1,2})/,
+    // 西元年月日無分隔: 20270326
+    /(\d{4})(\d{2})(\d{2})/,
+    // 民國年: 116/03/26 or 116.03.26
+    /(1\d{2})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{1,2})/,
+    // 月/年: 03/2027 or 03.2027
+    /(\d{1,2})[\/\.\-](\d{4})/,
+    // 年月: 2027/03 or 2027.03
+    /(\d{4})[\/\.\-](\d{1,2})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = clean.match(pattern);
+    if (match) {
+      let yr, mo, dy;
+
+      if (pattern === patterns[3]) {
+        // 月/年格式
+        mo = parseInt(match[1]);
+        yr = parseInt(match[2]);
+        dy = 1;
+      } else if (pattern === patterns[4]) {
+        // 年月格式
+        yr = parseInt(match[1]);
+        mo = parseInt(match[2]);
+        dy = 1;
+      } else if (pattern === patterns[2]) {
+        // 民國年
+        yr = parseInt(match[1]) + 1911;
+        mo = parseInt(match[2]);
+        dy = parseInt(match[3]);
+      } else {
+        yr = parseInt(match[1]);
+        mo = parseInt(match[2]);
+        dy = parseInt(match[3]);
+      }
+
+      // 驗證日期合理性
+      if (yr >= 2024 && yr <= 2035 && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+        const moStr = String(mo).padStart(2, '0');
+        const dyStr = String(dy).padStart(2, '0');
+        return {
+          display: `${yr}/${moStr}/${dyStr}`,
+          value: `${yr}-${moStr}-${dyStr}`
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function confirmOCR() {
