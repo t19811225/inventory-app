@@ -446,11 +446,24 @@ function renderScanList() {
 }
 
 // ====== 效期拍照 ======
+// 預先載入 OCR 引擎
+let ocrWorker = null;
+async function initOCR() {
+  if (ocrWorker) return;
+  ocrWorker = await Tesseract.createWorker('eng', 1, {
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
+  });
+}
+// 頁面載入後背景預載 OCR
+setTimeout(initOCR, 3000);
+
 function openExpiryCam(pid) {
   expiryTarget = pid;
   document.getElementById('ocrResult').textContent = '等待拍照...';
   document.getElementById('ocrResult').style.color = 'var(--text-dim)';
   document.getElementById('ocrConfirm').style.display = 'none';
+  // 確保 OCR 已載入
+  initOCR();
   openModal('expiryCamModal');
   const video = document.getElementById('expiryCamPreview');
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
@@ -473,14 +486,16 @@ async function captureExpiry() {
   confirmBtn.style.display = 'none';
 
   try {
-    // 使用 Tesseract.js 進行 OCR 辨識
-    const { data } = await Tesseract.recognize(canvas, 'eng', {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          result.textContent = '辨識中... ' + Math.round(m.progress * 100) + '%';
-        }
-      }
-    });
+    // 裁剪中央區域提高速度和準確度
+    const cropCanvas = document.createElement('canvas');
+    const cw = canvas.width, ch = canvas.height;
+    cropCanvas.width = cw * 0.8;
+    cropCanvas.height = ch * 0.4;
+    cropCanvas.getContext('2d').drawImage(canvas, cw*0.1, ch*0.3, cw*0.8, ch*0.4, 0, 0, cropCanvas.width, cropCanvas.height);
+
+    // 使用預載的 OCR worker
+    if (!ocrWorker) await initOCR();
+    const { data } = await ocrWorker.recognize(cropCanvas);
 
     const text = data.text;
     // 嘗試從辨識文字中提取日期
