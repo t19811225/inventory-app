@@ -773,7 +773,7 @@ async function renderHistory() {
       trend = `<span class="badge ${d>=0?'badge-up':'badge-down'}">${d>=0?'&#8593;':'&#8595;'} ${Math.abs(p)}%</span>`;
     }
     h += `<div class="history-card" data-rid="${r.id}">
-      <div class="history-head"><span class="history-date">${r.date}</span>${trend}</div>
+      <div class="history-head"><span class="history-date">${r.date}</span><div style="display:flex;align-items:center;gap:8px;">${trend}<button class="history-delete" data-delrec="${r.id}" title="刪除此筆紀錄">&#10005;</button></div></div>
       <div class="history-row"><span class="hl">品項數</span><span>${r.items.length} 項</span></div>
       <div class="history-row"><span class="hl">總數量</span><span>${r.totalQty}</span></div>`;
     // 展開明細
@@ -783,6 +783,15 @@ async function renderHistory() {
     h += '</div>';
   });
   el.innerHTML = h;
+
+  el.querySelectorAll('[data-delrec]').forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const ok = await showConfirm('刪除紀錄', '確定要刪除此筆盤點紀錄嗎？');
+    if (!ok) return;
+    await syncDelete('records', parseInt(b.dataset.delrec));
+    renderHistory();
+    toast('盤點紀錄已刪除');
+  }));
 }
 
 // ====== 設定 ======
