@@ -272,7 +272,11 @@ function initScanTab() {
   document.getElementById('btnTogglePicker').addEventListener('click', toggleProductPicker);
   document.getElementById('btnManualAdd').addEventListener('click', addManual);
   document.getElementById('manualBarcode').addEventListener('keypress', e => { if (e.key === 'Enter') addManual(); });
-  document.getElementById('productSearchInPicker').addEventListener('input', e => renderProductGrid(e.target.value));
+  let searchTimer = null;
+  document.getElementById('productSearchInPicker').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => renderProductGrid(e.target.value), 200);
+  });
 }
 
 // ====== 掃碼器 ======
@@ -297,9 +301,18 @@ function toggleScanner() {
       if (err) { toast('無法開啟相機'); box.style.display='none'; btn.textContent='開啟掃碼'; scannerOn=false; return; }
       Quagga.start();
     });
+    let lastScannedCode = '';
+    let lastScanTime = 0;
     Quagga.onDetected(function(r) {
       const code = r.codeResult.code;
-      if (code) { addItemByBarcode(code); if(navigator.vibrate) navigator.vibrate(100); }
+      const now = Date.now();
+      // 防止同一條碼 1.5 秒內重複觸發
+      if (code && (code !== lastScannedCode || now - lastScanTime > 1500)) {
+        lastScannedCode = code;
+        lastScanTime = now;
+        addItemByBarcode(code);
+        if(navigator.vibrate) navigator.vibrate(100);
+      }
     });
   }
 }
@@ -434,9 +447,16 @@ function renderScanList() {
     const d = parseInt(b.dataset.d);
     if (!scanned[pid]) return;
     scanned[pid].qty = Math.max(0, scanned[pid].qty + d);
-    if (scanned[pid].qty === 0) delete scanned[pid];
-    renderScanList();
-    if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
+    if (scanned[pid].qty === 0) {
+      delete scanned[pid];
+      renderScanList();
+      if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
+    } else {
+      // 只更新數字，不重繪整頁
+      const card = b.closest('.item-card');
+      if (card) card.querySelector('.qty-val').textContent = scanned[pid].qty;
+      document.getElementById('itemCount').textContent = Object.keys(scanned).length + ' 項';
+    }
   }));
   el.querySelectorAll('[data-expiry]').forEach(inp => inp.addEventListener('change', () => {
     const pid = parseInt(inp.dataset.expiry);
