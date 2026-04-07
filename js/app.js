@@ -17,6 +17,7 @@ let scannerOn = false;
 let pickerOpen = false;
 let expiryTarget = null;
 let expiryCamStream = null;
+let editingRecordId = null;  // 正在修改的盤點紀錄 ID
 
 // ====== 初始化 ======
 document.addEventListener('DOMContentLoaded', async () => {
@@ -622,8 +623,15 @@ async function saveRecord() {
     savedAt: new Date().toISOString()
   };
 
-  await syncAdd('records', record);
-  toast('盤點紀錄已儲存！');
+  if (editingRecordId) {
+    record.id = editingRecordId;
+    await syncPut('records', record);
+    toast('盤點紀錄已更新！');
+    editingRecordId = null;
+  } else {
+    await syncAdd('records', record);
+    toast('盤點紀錄已儲存！');
+  }
 }
 
 // ====== 即時比較 ======
@@ -773,7 +781,7 @@ async function renderHistory() {
       trend = `<span class="badge ${d>=0?'badge-up':'badge-down'}">${d>=0?'&#8593;':'&#8595;'} ${Math.abs(p)}%</span>`;
     }
     h += `<div class="history-card" data-rid="${r.id}">
-      <div class="history-head"><span class="history-date">${r.date}</span><div>${trend}<button class="btn btn-sm btn-danger" data-delrec="${r.id}" style="margin-left:8px;">刪除</button></div></div>
+      <div class="history-head"><span class="history-date">${r.date}</span><div>${trend}<button class="btn btn-sm btn-secondary" data-editrec="${r.id}" style="margin-left:8px;">修改</button><button class="btn btn-sm btn-danger" data-delrec="${r.id}" style="margin-left:4px;">刪除</button></div></div>
       <div class="history-row"><span class="hl">品項數</span><span>${r.items.length} 項</span></div>
       <div class="history-row"><span class="hl">總數量</span><span>${r.totalQty}</span></div>`;
     // 展開明細
@@ -783,6 +791,32 @@ async function renderHistory() {
     h += '</div>';
   });
   el.innerHTML = h;
+
+  // 綁定修改盤點紀錄事件
+  el.querySelectorAll('[data-editrec]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.editrec);
+      const rec = records.find(r => r.id === id);
+      if (!rec) return;
+      // 載入紀錄到掃碼盤點頁面
+      editingRecordId = id;
+      activeClientId = rec.clientId;
+      document.getElementById('clientSelect').value = rec.clientId;
+      document.getElementById('checkDate').value = rec.date;
+      scanned = {};
+      rec.items.forEach(item => {
+        scanned[item.productId] = { name: item.name, qty: item.qty, expiry: item.expiry || '', barcode: item.barcode || '' };
+      });
+      renderScanList();
+      // 切換到掃碼盤點 Tab
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelector('[data-tab="scan"]').classList.add('active');
+      document.getElementById('tab-scan').classList.add('active');
+      toast('已載入紀錄，修改後請點儲存');
+    });
+  });
 
   // 綁定刪除盤點紀錄事件
   el.querySelectorAll('[data-delrec]').forEach(btn => {
