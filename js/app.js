@@ -773,7 +773,7 @@ async function renderHistory() {
       trend = `<span class="badge ${d>=0?'badge-up':'badge-down'}">${d>=0?'&#8593;':'&#8595;'} ${Math.abs(p)}%</span>`;
     }
     h += `<div class="history-card" data-rid="${r.id}">
-      <div class="history-head"><span class="history-date">${r.date}</span>${trend}</div>
+      <div class="history-head"><span class="history-date">${r.date}</span><div>${trend}<button class="btn btn-sm btn-danger" data-delrec="${r.id}" style="margin-left:8px;">刪除</button></div></div>
       <div class="history-row"><span class="hl">品項數</span><span>${r.items.length} 項</span></div>
       <div class="history-row"><span class="hl">總數量</span><span>${r.totalQty}</span></div>`;
     // 展開明細
@@ -783,6 +783,19 @@ async function renderHistory() {
     h += '</div>';
   });
   el.innerHTML = h;
+
+  // 綁定刪除盤點紀錄事件
+  el.querySelectorAll('[data-delrec]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.delrec);
+      const ok = await showConfirm('刪除盤點紀錄', '確定要刪除這筆盤點紀錄嗎？此操作無法復原。');
+      if (!ok) return;
+      await syncDelete('records', id);
+      toast('盤點紀錄已刪除');
+      renderHistory();
+    });
+  });
 }
 
 // ====== 設定 ======
