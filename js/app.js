@@ -337,7 +337,7 @@ function addItemById(productId) {
   if (scanned[productId]) {
     scanned[productId].qty++;
   } else {
-    scanned[productId] = { name: p.name, qty: 1, expiry: '', barcode: p.barcode || '' };
+    scanned[productId] = { name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
   }
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
