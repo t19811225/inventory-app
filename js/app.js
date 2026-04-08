@@ -11,7 +11,8 @@ const DEFAULT_CLIENTS = {};
 let allProducts = [];
 let allClients = [];
 let allRegions = [];
-let scanned = {};       // { productId: { name, qty, expiry, barcode } }
+let scanned = {};       // { entryId: { productId, name, qty, expiry, barcode } }
+let nextEntryId = 1;    // 每筆盤點項目的唯一 ID
 let activeClientId = null;
 let scannerOn = false;
 let pickerOpen = false;
@@ -103,13 +104,13 @@ function initInfoBar() {
   regionSel.addEventListener('change', () => {
     filterClients();
     activeClientId = null;
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     renderScanList();
   });
 
   clientSel.addEventListener('change', () => {
     activeClientId = clientSel.value ? parseInt(clientSel.value) : null;
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     renderScanList();
     if (activeClientId) {
       const c = allClients.find(x => x.id === activeClientId);
@@ -331,9 +332,10 @@ function renderProductGrid(filter) {
   let html = '';
   allProducts.forEach(p => {
     if (f && !p.name.toLowerCase().includes(f)) return;
-    const isAdded = scanned[p.id];
-    const cls = isAdded ? ' added' : '';
-    const qtyLabel = isAdded ? ` (${isAdded.qty})` : '';
+    const entries = Object.values(scanned).filter(s => s.productId === p.id);
+    const totalQty = entries.reduce((s, e) => s + e.qty, 0);
+    const cls = entries.length ? ' added' : '';
+    const qtyLabel = entries.length ? ` (${totalQty})` : '';
     html += `<button class="product-pick${cls}" data-pid="${p.id}">${p.name}${qtyLabel}</button>`;
   });
   grid.innerHTML = html || '<div style="grid-column:1/-1;text-align:center;color:var(--text-dim);padding:20px;">找不到品項</div>';
@@ -348,11 +350,8 @@ function addItemById(productId) {
   if (!activeClientId) return toast('請先選擇客戶');
   const p = allProducts.find(x => x.id === productId);
   if (!p) return;
-  if (scanned[productId]) {
-    scanned[productId].qty++;
-  } else {
-    scanned[productId] = { name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
-  }
+  // 每次新增都建立新的一筆，支援同品項不同效期/數量
+  scanned[nextEntryId++] = { productId: p.id, name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
   toast('+ ' + p.name);
@@ -393,7 +392,7 @@ function renderScanList() {
     return;
   }
 
-  el.innerHTML = entries.map(([pid, item]) => {
+  el.innerHTML = entries.map(([eid, item]) => {
     let expiryClass = '';
     if (item.expiry) {
       const d = (new Date(item.expiry) - new Date()) / 86400000;
@@ -402,37 +401,31 @@ function renderScanList() {
       else expiryClass = 'expiry-ok';
     }
 
-    // 上次比較
-    let compareHtml = '';
-    // 從歷史紀錄抓上次
-    // (會在有歷史資料時顯示)
-
-    return `<div class="item-card">
+    return `<div class="item-card" data-eid="${eid}">
       <div class="item-top">
         <div>
           <div class="item-name">${item.name}</div>
           ${item.barcode ? `<div class="item-barcode">${item.barcode}</div>` : ''}
         </div>
-        <button class="item-delete" data-del="${pid}">&#10005;</button>
+        <button class="item-delete" data-del="${eid}">&#10005;</button>
       </div>
       <div class="item-fields">
         <div class="field-group">
           <span class="field-label">數量</span>
           <div class="qty-ctrl">
-            <button class="qty-btn" data-qty="${pid}" data-d="-1">&#8722;</button>
+            <button class="qty-btn" data-qty="${eid}" data-d="-1">&#8722;</button>
             <span class="qty-val">${item.qty}</span>
-            <button class="qty-btn" data-qty="${pid}" data-d="1">&#65291;</button>
+            <button class="qty-btn" data-qty="${eid}" data-d="1">&#65291;</button>
           </div>
         </div>
         <div class="field-group">
           <span class="field-label">效期</span>
           <div class="field-row">
-            <input type="date" class="expiry-input ${expiryClass}" value="${item.expiry}" data-expiry="${pid}">
-            <button class="cam-btn" data-cam="${pid}" title="拍照辨識效期">&#128247;</button>
+            <input type="date" class="expiry-input ${expiryClass}" value="${item.expiry}" data-expiry="${eid}">
+            <button class="cam-btn" data-cam="${eid}" title="拍照辨識效期">&#128247;</button>
           </div>
         </div>
       </div>
-      ${compareHtml}
     </div>`;
   }).join('');
 
@@ -625,8 +618,8 @@ async function saveRecord() {
 
   const client = allClients.find(c => c.id === activeClientId);
   const date = document.getElementById('checkDate').value;
-  const items = entries.map(([pid, item]) => ({
-    productId: parseInt(pid),
+  const items = entries.map(([, item]) => ({
+    productId: item.productId,
     name: item.name,
     qty: item.qty,
     expiry: item.expiry,
@@ -684,10 +677,16 @@ async function renderCompare() {
   if (lastRec) h += '<th>上次</th><th>差異</th>';
   h += '<th>效期</th><th>狀態</th></tr></thead><tbody>';
 
-  // 合併所有品項
+  // 合併所有品項（同品項不同效期會合併數量，效期取最近一筆）
   const allItemsMap = new Map();
   entries.forEach(([, item]) => {
-    allItemsMap.set(item.name, { now: item.qty, last: 0, expiry: item.expiry });
+    if (allItemsMap.has(item.name)) {
+      const existing = allItemsMap.get(item.name);
+      existing.now += item.qty;
+      if (item.expiry) existing.expiry = item.expiry;
+    } else {
+      allItemsMap.set(item.name, { now: item.qty, last: 0, expiry: item.expiry });
+    }
   });
   if (lastRec) {
     lastRec.items.forEach(i => {
@@ -825,8 +824,9 @@ async function renderHistory() {
       document.getElementById('clientSelect').value = rec.clientId;
       document.getElementById('checkDate').value = rec.date;
       scanned = {};
+      nextEntryId = 1;
       rec.items.forEach(item => {
-        scanned[item.productId] = { name: item.name, qty: item.qty, expiry: item.expiry || '', barcode: item.barcode || '' };
+        scanned[nextEntryId++] = { productId: item.productId, name: item.name, qty: item.qty, expiry: item.expiry || '', barcode: item.barcode || '' };
       });
       renderScanList();
       // 切換到掃碼盤點 Tab
@@ -912,7 +912,7 @@ function initSettings() {
     if (!ok) return;
     await dbClear('regions'); await dbClear('clients'); await dbClear('products'); await dbClear('records'); await dbClear('orders');
     await initData();
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     activeClientId = null;
     renderScanList();
     closeModal('settingsModal');
