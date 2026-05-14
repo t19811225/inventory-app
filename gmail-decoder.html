@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Gmail 檔名解碼器</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    margin: 0;
+    padding: 20px;
+    max-width: 640px;
+    margin: 0 auto;
+    background: #f2f2f7;
+    color: #1c1c1e;
+    min-height: 100vh;
+  }
+  h1 { font-size: 26px; margin: 8px 0 16px; }
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .help {
+    background: #fff8e1;
+    border-left: 4px solid #ffb300;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .help code {
+    background: rgba(0,0,0,0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  label { display: block; font-size: 14px; color: #6c6c70; margin-bottom: 8px; }
+  textarea {
+    width: 100%;
+    min-height: 110px;
+    font-size: 16px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid #d1d1d6;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+  }
+  textarea:focus { outline: none; border-color: #007aff; }
+  .filename-box {
+    font-size: 22px;
+    font-weight: 600;
+    color: #007aff;
+    padding: 14px;
+    background: #f2f7ff;
+    border-radius: 10px;
+    word-break: break-all;
+    min-height: 28px;
+    text-align: center;
+  }
+  .ext-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  .ext-btn {
+    flex: 1 1 auto;
+    min-width: 64px;
+    padding: 12px 8px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid #d1d1d6;
+    background: #fff;
+    color: #007aff;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .ext-btn:active { background: #e5e5ea; }
+  .ext-btn.active { background: #007aff; color: #fff; border-color: #007aff; }
+  .copy-btn {
+    width: 100%;
+    margin-top: 14px;
+    padding: 16px;
+    font-size: 17px;
+    font-weight: 600;
+    border-radius: 12px;
+    border: none;
+    background: #007aff;
+    color: #fff;
+    cursor: pointer;
+  }
+  .copy-btn:active { background: #0051d5; }
+  .copy-btn.done { background: #34c759; }
+  .empty { color: #c7c7cc; font-weight: 400; font-size: 16px; }
+  .steps { font-size: 14px; line-height: 1.8; color: #3a3a3c; }
+  .steps ol { padding-left: 20px; margin: 8px 0; }
+  details { margin-top: 12px; }
+  summary { font-weight: 600; cursor: pointer; padding: 6px 0; }
+  .raw { font-size: 13px; color: #6c6c70; word-break: break-all; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+  <h1>📨 Gmail 檔名解碼器</h1>
+
+  <div class="card help">
+    收到的附件檔名長得像 <code>=?UTF-8?Q?=E6=9E=97...</code> 嗎？把整串貼進下面，這個工具會幫你還原成中文檔名，再加上正確的副檔名。
+  </div>
+
+  <div class="card">
+    <label>① 貼上亂碼檔名</label>
+    <textarea id="input" placeholder="例：=?UTF-8?Q?=E6=9E=97=E5=B0=8F=E6=B6=B5_0514" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+  </div>
+
+  <div class="card">
+    <label>② 還原後的檔名</label>
+    <div class="filename-box" id="filename"><span class="empty">（貼上後會自動顯示）</span></div>
+
+    <label style="margin-top:16px">③ 選擇副檔名（不知道就先試 .jpg）</label>
+    <div class="ext-row" id="extRow">
+      <button class="ext-btn" data-ext=".jpg">.jpg</button>
+      <button class="ext-btn" data-ext=".jpeg">.jpeg</button>
+      <button class="ext-btn" data-ext=".png">.png</button>
+      <button class="ext-btn" data-ext=".heic">.heic</button>
+      <button class="ext-btn" data-ext=".pdf">.pdf</button>
+      <button class="ext-btn" data-ext="">不加</button>
+    </div>
+
+    <button class="copy-btn" id="copyBtn">📋 複製檔名</button>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>📖 怎麼用？完整步驟</summary>
+      <div class="steps">
+        <ol>
+          <li>在 Gmail 信件裡，<b>長按</b>亂碼檔名（例如 <code>=?UTF-8?Q?...</code>），選「拷貝」</li>
+          <li>回到這個頁面，<b>長按上面的輸入框</b> → 貼上</li>
+          <li>檔名會自動還原成中文</li>
+          <li>選一個副檔名（照片通常是 <b>.jpg</b>）</li>
+          <li>按「複製檔名」</li>
+          <li>回到 Gmail 把附件「儲存到檔案」</li>
+          <li>打開「檔案」App → 找到剛存的檔 → 長按 → <b>重新命名</b> → 貼上 → 完成 ✅</li>
+        </ol>
+      </div>
+    </details>
+    <details>
+      <summary>🔍 原始位元組（除錯用）</summary>
+      <div class="raw" id="rawBytes">—</div>
+    </details>
+  </div>
+
+<script>
+  const input = document.getElementById('input');
+  const filenameEl = document.getElementById('filename');
+  const copyBtn = document.getElementById('copyBtn');
+  const extRow = document.getElementById('extRow');
+  const rawBytes = document.getElementById('rawBytes');
+
+  let baseName = '';
+  let currentExt = '';
+
+  function hexToBytes(hexStr) {
+    const out = [];
+    for (let i = 0; i + 1 < hexStr.length; i += 2) {
+      out.push(parseInt(hexStr.substr(i, 2), 16));
+    }
+    return out;
+  }
+
+  function decodeQText(text) {
+    // RFC 2047 "Q" encoding. For filenames we KEEP underscores literal
+    // (filenames almost never contain spaces; underscore-as-space is
+    // confusing in this context).
+    const bytes = [];
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      if (ch === '=' && i + 2 < text.length && /^[0-9A-Fa-f]{2}$/.test(text.substr(i + 1, 2))) {
+        bytes.push(parseInt(text.substr(i + 1, 2), 16));
+        i += 3;
+      } else {
+        bytes.push(text.charCodeAt(i) & 0xff);
+        i += 1;
+      }
+    }
+    return bytes;
+  }
+
+  function decodeBText(text) {
+    const clean = text.replace(/\s+/g, '');
+    try {
+      const bin = atob(clean);
+      const out = [];
+      for (let i = 0; i < bin.length; i++) out.push(bin.charCodeAt(i));
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function bytesToString(bytes, charset) {
+    try {
+      return new TextDecoder(charset || 'utf-8').decode(new Uint8Array(bytes));
+    } catch (e) {
+      return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+    }
+  }
+
+  function decodeEncodedWords(raw) {
+    let s = (raw || '').trim();
+    if (!s) return '';
+
+    // Match =?charset?Q-or-B?text?=  (also tolerate missing trailing ?=)
+    const re = /=\?([^?]+)\?([QqBb])\?([^?]*?)(?:\?=|$)/g;
+    let result = '';
+    let lastEnd = 0;
+    let m;
+    let foundAny = false;
+    let allBytes = [];
+
+    while ((m = re.exec(s)) !== null) {
+      foundAny = true;
+      // Append any literal text before this encoded-word
+      if (m.index > lastEnd) {
+        result += s.substring(lastEnd, m.index);
+      }
+      const charset = m[1];
+      const enc = m[2].toUpperCase();
+      const text = m[3];
+      const bytes = (enc === 'Q') ? decodeQText(text) : decodeBText(text);
+      allBytes = allBytes.concat(bytes);
+      result += bytesToString(bytes, charset);
+      lastEnd = re.lastIndex;
+    }
+
+    // Append trailing literal
+    if (lastEnd < s.length) result += s.substring(lastEnd);
+
+    rawBytes.textContent = foundAny
+      ? allBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')
+      : '（沒有偵測到編碼）';
+
+    // If nothing matched, just return the input (user might paste plain text)
+    return foundAny ? result : s;
+  }
+
+  function render() {
+    const decoded = decodeEncodedWords(input.value);
+    baseName = decoded;
+    if (!decoded) {
+      filenameEl.innerHTML = '<span class="empty">（貼上後會自動顯示）</span>';
+      return;
+    }
+    // Strip a trailing extension already present, if user picked one separately
+    let display = baseName;
+    if (currentExt) {
+      display = display.replace(/\.(jpg|jpeg|png|heic|pdf)$/i, '') + currentExt;
+    }
+    filenameEl.textContent = display;
+  }
+
+  function fullFilename() {
+    if (!baseName) return '';
+    if (currentExt) {
+      return baseName.replace(/\.(jpg|jpeg|png|heic|pdf)$/i, '') + currentExt;
+    }
+    return baseName;
+  }
+
+  input.addEventListener('input', render);
+
+  extRow.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ext-btn');
+    if (!btn) return;
+    extRow.querySelectorAll('.ext-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentExt = btn.dataset.ext || '';
+    render();
+  });
+
+  async function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+    }
+    // Fallback for older Safari / non-https
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  copyBtn.addEventListener('click', async () => {
+    const name = fullFilename();
+    if (!name) {
+      copyBtn.textContent = '請先貼上檔名';
+      setTimeout(() => copyBtn.textContent = '📋 複製檔名', 1500);
+      return;
+    }
+    const ok = await copyToClipboard(name);
+    copyBtn.classList.add('done');
+    copyBtn.textContent = ok ? '✅ 已複製：' + name : '請手動長按上方檔名複製';
+    setTimeout(() => {
+      copyBtn.classList.remove('done');
+      copyBtn.textContent = '📋 複製檔名';
+    }, 2500);
+  });
+
+  // Pre-select .jpg as the most common case
+  extRow.querySelector('[data-ext=".jpg"]').classList.add('active');
+  currentExt = '.jpg';
+</script>
+</body>
+</html>
