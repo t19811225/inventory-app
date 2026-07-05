@@ -11,7 +11,8 @@ const DEFAULT_CLIENTS = {};
 let allProducts = [];
 let allClients = [];
 let allRegions = [];
-let scanned = {};       // { productId: { name, qty, expiry, barcode } }
+let scanned = {};       // { entryId: { productId, name, qty, expiry, barcode } }
+let nextEntryId = 1;    // 每筆盤點項目的唯一 ID
 let activeClientId = null;
 let scannerOn = false;
 let pickerOpen = false;
@@ -20,7 +21,7 @@ let expiryCamStream = null;
 let tapCamStream = null;
 let tapPhotoSnap = null;   // 拍下的照片（canvas）
 let tapPoints = [];        // 目前品項已點的座標 [{x,y}]
-let editingRecordId = null; // 正在修改的歷史紀錄 id（null = 新增模式）
+let editingRecordId = null;  // 正在修改的盤點紀錄 ID
 
 // ====== 初始化 ======
 document.addEventListener('DOMContentLoaded', async () => {
@@ -107,14 +108,14 @@ function initInfoBar() {
   regionSel.addEventListener('change', () => {
     filterClients();
     activeClientId = null;
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     editingRecordId = null;
     renderScanList();
   });
 
   clientSel.addEventListener('change', () => {
     activeClientId = clientSel.value ? parseInt(clientSel.value) : null;
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     editingRecordId = null;
     renderScanList();
     if (activeClientId) {
@@ -394,11 +395,8 @@ function addTapCountToList() {
   const p = allProducts.find(x => x.id === pid);
   if (!p) return toast('請選擇品項');
 
-  if (scanned[pid]) {
-    scanned[pid].qty += qty;
-  } else {
-    scanned[pid] = { name: p.name, qty, expiry: '', barcode: p.barcode || '' };
-  }
+  // 建立新的一筆，與掃碼一致（支援同品項不同效期/數量）
+  scanned[nextEntryId++] = { productId: p.id, name: p.name, qty, expiry: '', barcode: p.barcode || '' };
 
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
@@ -422,7 +420,11 @@ function initScanTab() {
   document.getElementById('btnTogglePicker').addEventListener('click', toggleProductPicker);
   document.getElementById('btnManualAdd').addEventListener('click', addManual);
   document.getElementById('manualBarcode').addEventListener('keypress', e => { if (e.key === 'Enter') addManual(); });
-  document.getElementById('productSearchInPicker').addEventListener('input', e => renderProductGrid(e.target.value));
+  let searchTimer = null;
+  document.getElementById('productSearchInPicker').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => renderProductGrid(e.target.value), 200);
+  });
 }
 
 // ====== 掃碼器 ======
@@ -447,9 +449,18 @@ function toggleScanner() {
       if (err) { toast('無法開啟相機'); box.style.display='none'; btn.textContent='開啟掃碼'; scannerOn=false; return; }
       Quagga.start();
     });
+    let lastScannedCode = '';
+    let lastScanTime = 0;
     Quagga.onDetected(function(r) {
       const code = r.codeResult.code;
-      if (code) { addItemByBarcode(code); if(navigator.vibrate) navigator.vibrate(100); }
+      const now = Date.now();
+      // 防止同一條碼 1.5 秒內重複觸發
+      if (code && (code !== lastScannedCode || now - lastScanTime > 1500)) {
+        lastScannedCode = code;
+        lastScanTime = now;
+        addItemByBarcode(code);
+        if(navigator.vibrate) navigator.vibrate(100);
+      }
     });
   }
 }
@@ -468,9 +479,10 @@ function renderProductGrid(filter) {
   let html = '';
   allProducts.forEach(p => {
     if (f && !p.name.toLowerCase().includes(f)) return;
-    const isAdded = scanned[p.id];
-    const cls = isAdded ? ' added' : '';
-    const qtyLabel = isAdded ? ` (${isAdded.qty})` : '';
+    const entries = Object.values(scanned).filter(s => s.productId === p.id);
+    const totalQty = entries.reduce((s, e) => s + e.qty, 0);
+    const cls = entries.length ? ' added' : '';
+    const qtyLabel = entries.length ? ` (${totalQty})` : '';
     html += `<button class="product-pick${cls}" data-pid="${p.id}">${p.name}${qtyLabel}</button>`;
   });
   grid.innerHTML = html || '<div style="grid-column:1/-1;text-align:center;color:var(--text-dim);padding:20px;">找不到品項</div>';
@@ -485,11 +497,8 @@ function addItemById(productId) {
   if (!activeClientId) return toast('請先選擇客戶');
   const p = allProducts.find(x => x.id === productId);
   if (!p) return;
-  if (scanned[productId]) {
-    scanned[productId].qty++;
-  } else {
-    scanned[productId] = { name: p.name, qty: 1, expiry: '', barcode: p.barcode || '' };
-  }
+  // 每次新增都建立新的一筆，支援同品項不同效期/數量
+  scanned[nextEntryId++] = { productId: p.id, name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
   toast('+ ' + p.name);
@@ -530,7 +539,7 @@ function renderScanList() {
     return;
   }
 
-  el.innerHTML = entries.map(([pid, item]) => {
+  el.innerHTML = entries.map(([eid, item]) => {
     let expiryClass = '';
     if (item.expiry) {
       const d = (new Date(item.expiry) - new Date()) / 86400000;
@@ -539,37 +548,31 @@ function renderScanList() {
       else expiryClass = 'expiry-ok';
     }
 
-    // 上次比較
-    let compareHtml = '';
-    // 從歷史紀錄抓上次
-    // (會在有歷史資料時顯示)
-
-    return `<div class="item-card">
+    return `<div class="item-card" data-eid="${eid}">
       <div class="item-top">
         <div>
           <div class="item-name">${item.name}</div>
           ${item.barcode ? `<div class="item-barcode">${item.barcode}</div>` : ''}
         </div>
-        <button class="item-delete" data-del="${pid}">&#10005;</button>
+        <button class="item-delete" data-del="${eid}">&#10005;</button>
       </div>
       <div class="item-fields">
         <div class="field-group">
           <span class="field-label">數量</span>
           <div class="qty-ctrl">
-            <button class="qty-btn" data-qty="${pid}" data-d="-1">&#8722;</button>
+            <button class="qty-btn" data-qty="${eid}" data-d="-1">&#8722;</button>
             <span class="qty-val">${item.qty}</span>
-            <button class="qty-btn" data-qty="${pid}" data-d="1">&#65291;</button>
+            <button class="qty-btn" data-qty="${eid}" data-d="1">&#65291;</button>
           </div>
         </div>
         <div class="field-group">
           <span class="field-label">效期</span>
           <div class="field-row">
-            <input type="date" class="expiry-input ${expiryClass}" value="${item.expiry}" data-expiry="${pid}">
-            <button class="cam-btn" data-cam="${pid}" title="拍照辨識效期">&#128247;</button>
+            <input type="date" class="expiry-input ${expiryClass}" value="${item.expiry}" data-expiry="${eid}">
+            <button class="cam-btn" data-cam="${eid}" title="拍照辨識效期">&#128247;</button>
           </div>
         </div>
       </div>
-      ${compareHtml}
     </div>`;
   }).join('');
 
@@ -584,9 +587,16 @@ function renderScanList() {
     const d = parseInt(b.dataset.d);
     if (!scanned[pid]) return;
     scanned[pid].qty = Math.max(0, scanned[pid].qty + d);
-    if (scanned[pid].qty === 0) delete scanned[pid];
-    renderScanList();
-    if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
+    if (scanned[pid].qty === 0) {
+      delete scanned[pid];
+      renderScanList();
+      if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
+    } else {
+      // 只更新數字，不重繪整頁
+      const card = b.closest('.item-card');
+      if (card) card.querySelector('.qty-val').textContent = scanned[pid].qty;
+      document.getElementById('itemCount').textContent = Object.keys(scanned).length + ' 項';
+    }
   }));
   el.querySelectorAll('[data-expiry]').forEach(inp => inp.addEventListener('change', () => {
     const pid = parseInt(inp.dataset.expiry);
@@ -755,8 +765,8 @@ async function saveRecord() {
 
   const client = allClients.find(c => c.id === activeClientId);
   const date = document.getElementById('checkDate').value;
-  const items = entries.map(([pid, item]) => ({
-    productId: parseInt(pid),
+  const items = entries.map(([, item]) => ({
+    productId: item.productId,
     name: item.name,
     qty: item.qty,
     expiry: item.expiry,
@@ -773,15 +783,13 @@ async function saveRecord() {
     savedAt: new Date().toISOString()
   };
 
-  // 修改模式：更新原紀錄，不新增
+  // 修改模式：以原紀錄為底更新（保留 _fbKey，避免雲端產生重複紀錄）
   if (editingRecordId) {
     const existing = await dbGet('records', editingRecordId);
     if (existing) {
       await syncPut('records', { ...existing, ...record });
       editingRecordId = null;
-      scanned = {};
-      renderScanList();
-      toast('紀錄已更新！');
+      toast('盤點紀錄已更新！');
       return;
     }
     editingRecordId = null; // 原紀錄不存在，改走新增
@@ -821,10 +829,16 @@ async function renderCompare() {
   if (lastRec) h += '<th>上次</th><th>差異</th>';
   h += '<th>效期</th><th>狀態</th></tr></thead><tbody>';
 
-  // 合併所有品項
+  // 合併所有品項（同品項不同效期會合併數量，效期取最近一筆）
   const allItemsMap = new Map();
   entries.forEach(([, item]) => {
-    allItemsMap.set(item.name, { now: item.qty, last: 0, expiry: item.expiry });
+    if (allItemsMap.has(item.name)) {
+      const existing = allItemsMap.get(item.name);
+      existing.now += item.qty;
+      if (item.expiry) existing.expiry = item.expiry;
+    } else {
+      allItemsMap.set(item.name, { now: item.qty, last: 0, expiry: item.expiry });
+    }
   });
   if (lastRec) {
     lastRec.items.forEach(i => {
@@ -938,7 +952,7 @@ async function renderHistory() {
       trend = `<span class="badge ${d>=0?'badge-up':'badge-down'}">${d>=0?'&#8593;':'&#8595;'} ${Math.abs(p)}%</span>`;
     }
     h += `<div class="history-card" data-rid="${r.id}">
-      <div class="history-head"><span class="history-date">${r.date}</span>${trend}</div>
+      <div class="history-head"><span class="history-date">${r.date}</span><div>${trend}<button class="btn btn-sm btn-secondary" data-editrec="${r.id}" style="margin-left:8px;">修改</button><button class="btn btn-sm btn-danger" data-delrec="${r.id}" style="margin-left:4px;">刪除</button></div></div>
       <div class="history-row"><span class="hl">品項數</span><span>${r.items.length} 項</span></div>
       <div class="history-row"><span class="hl">總數量</span><span>${r.totalQty}</span></div>`;
     // 展開明細
@@ -953,32 +967,45 @@ async function renderHistory() {
   });
   el.innerHTML = h;
 
-  // 刪除紀錄
-  el.querySelectorAll('[data-delrec]').forEach(b => b.addEventListener('click', async () => {
-    const ok = await showConfirm('刪除紀錄', '確定刪除這筆盤點紀錄嗎？此操作無法復原。');
-    if (!ok) return;
-    await syncDelete('records', parseInt(b.dataset.delrec));
-    renderHistory();
-    toast('紀錄已刪除');
-  }));
-
-  // 修改紀錄：載回掃碼盤點頁調整後再儲存
-  el.querySelectorAll('[data-editrec]').forEach(b => b.addEventListener('click', () => {
-    const r = records.find(x => x.id === parseInt(b.dataset.editrec));
-    if (!r) return;
-    editingRecordId = r.id;
-    document.getElementById('checkDate').value = r.date;
-    scanned = {};
-    r.items.forEach(i => {
-      let pid = i.productId;
-      if (!pid) { const p = allProducts.find(x => x.name === i.name); pid = p ? p.id : null; }
-      if (!pid) return;
-      scanned[pid] = { name: i.name, qty: i.qty, expiry: i.expiry || '', barcode: i.barcode || '' };
+  // 綁定修改盤點紀錄事件
+  el.querySelectorAll('[data-editrec]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.editrec);
+      const rec = records.find(r => r.id === id);
+      if (!rec) return;
+      // 載入紀錄到掃碼盤點頁面
+      editingRecordId = id;
+      activeClientId = rec.clientId;
+      document.getElementById('clientSelect').value = rec.clientId;
+      document.getElementById('checkDate').value = rec.date;
+      scanned = {};
+      nextEntryId = 1;
+      rec.items.forEach(item => {
+        scanned[nextEntryId++] = { productId: item.productId, name: item.name, qty: item.qty, expiry: item.expiry || '', barcode: item.barcode || '' };
+      });
+      renderScanList();
+      // 切換到掃碼盤點 Tab
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelector('[data-tab="scan"]').classList.add('active');
+      document.getElementById('tab-scan').classList.add('active');
+      toast('已載入紀錄，修改後請點儲存');
     });
-    renderScanList();
-    document.querySelector('.tab-btn[data-tab="scan"]').click();
-    toast('已載入 ' + r.date + ' 的紀錄，修改後按右下角儲存鍵更新');
-  }));
+  });
+
+  // 綁定刪除盤點紀錄事件
+  el.querySelectorAll('[data-delrec]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.delrec);
+      const ok = await showConfirm('刪除盤點紀錄', '確定要刪除這筆盤點紀錄嗎？此操作無法復原。');
+      if (!ok) return;
+      await syncDelete('records', id);
+      toast('盤點紀錄已刪除');
+      renderHistory();
+    });
+  });
 }
 
 // ====== 設定 ======
@@ -1041,7 +1068,7 @@ function initSettings() {
     if (!ok) return;
     await dbClear('regions'); await dbClear('clients'); await dbClear('products'); await dbClear('records'); await dbClear('orders');
     await initData();
-    scanned = {};
+    scanned = {}; nextEntryId = 1;
     activeClientId = null;
     renderScanList();
     closeModal('settingsModal');
