@@ -17,6 +17,10 @@ let scannerOn = false;
 let pickerOpen = false;
 let expiryTarget = null;
 let expiryCamStream = null;
+let tapCamStream = null;
+let tapPhotoSnap = null;   // 拍下的照片（canvas）
+let tapPoints = [];        // 目前品項已點的座標 [{x,y}]
+let editingRecordId = null; // 正在修改的歷史紀錄 id（null = 新增模式）
 
 // ====== 初始化 ======
 document.addEventListener('DOMContentLoaded', async () => {
@@ -26,6 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initScanTab();
   initModals();
   initSettings();
+  initTapCount();
   initFirebaseUI();
   registerSW();
 });
@@ -103,12 +108,14 @@ function initInfoBar() {
     filterClients();
     activeClientId = null;
     scanned = {};
+    editingRecordId = null;
     renderScanList();
   });
 
   clientSel.addEventListener('change', () => {
     activeClientId = clientSel.value ? parseInt(clientSel.value) : null;
     scanned = {};
+    editingRecordId = null;
     renderScanList();
     if (activeClientId) {
       const c = allClients.find(x => x.id === activeClientId);
@@ -263,6 +270,150 @@ function initModals() {
 
   // 儲存盤點
   document.getElementById('btnSaveRecord').addEventListener('click', saveRecord);
+}
+
+// ====== 拍照點數 ======
+function initTapCount() {
+  document.getElementById('btnTapCount').addEventListener('click', openTapCount);
+  document.getElementById('btnCloseTapCount').addEventListener('click', closeTapCount);
+  document.getElementById('btnTapCapture').addEventListener('click', captureTapPhoto);
+  document.getElementById('btnTapRetake').addEventListener('click', retakeTapPhoto);
+  document.getElementById('btnTapUndo').addEventListener('click', () => { tapPoints.pop(); redrawTapCanvas(); });
+  document.getElementById('btnTapClear').addEventListener('click', () => { tapPoints = []; redrawTapCanvas(); });
+  document.getElementById('btnTapAdd').addEventListener('click', addTapCountToList);
+
+  // 換品項時清空目前點數
+  document.getElementById('tapProductSelect').addEventListener('change', () => {
+    if (tapPoints.length) toast('已切換品項，計數歸零');
+    tapPoints = [];
+    redrawTapCanvas();
+  });
+
+  // 點照片計數
+  const canvas = document.getElementById('tapPhotoCanvas');
+  canvas.addEventListener('click', e => {
+    if (!tapPhotoSnap) return;
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) * canvas.width / r.width;
+    const y = (e.clientY - r.top) * canvas.height / r.height;
+    tapPoints.push({ x, y });
+    if (navigator.vibrate) navigator.vibrate(30);
+    redrawTapCanvas();
+  });
+}
+
+function openTapCount() {
+  if (!activeClientId) return toast('請先選擇客戶');
+  if (!allProducts.length) return toast('尚無品項資料，請先匯入');
+
+  tapPhotoSnap = null;
+  tapPoints = [];
+  document.getElementById('tapCamArea').style.display = 'block';
+  document.getElementById('tapCountArea').style.display = 'none';
+  document.getElementById('btnTapCapture').style.display = '';
+  document.getElementById('btnTapRetake').style.display = 'none';
+
+  // 品項下拉選單
+  const sel = document.getElementById('tapProductSelect');
+  const sorted = [...allProducts].sort((a, b) => a.name.localeCompare(b.name, 'zh-TW'));
+  sel.innerHTML = sorted.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+  openModal('tapCountModal');
+  startTapCam();
+}
+
+function startTapCam() {
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
+    .then(stream => { tapCamStream = stream; document.getElementById('tapCamPreview').srcObject = stream; })
+    .catch(() => toast('無法開啟相機'));
+}
+
+function captureTapPhoto() {
+  const video = document.getElementById('tapCamPreview');
+  if (!video.videoWidth) return toast('相機尚未就緒');
+
+  const snap = document.createElement('canvas');
+  snap.width = video.videoWidth;
+  snap.height = video.videoHeight;
+  snap.getContext('2d').drawImage(video, 0, 0);
+  tapPhotoSnap = snap;
+
+  if (tapCamStream) { tapCamStream.getTracks().forEach(t => t.stop()); tapCamStream = null; }
+
+  const canvas = document.getElementById('tapPhotoCanvas');
+  canvas.width = snap.width;
+  canvas.height = snap.height;
+
+  tapPoints = [];
+  document.getElementById('tapCamArea').style.display = 'none';
+  document.getElementById('tapCountArea').style.display = 'block';
+  document.getElementById('btnTapCapture').style.display = 'none';
+  document.getElementById('btnTapRetake').style.display = '';
+  redrawTapCanvas();
+}
+
+function retakeTapPhoto() {
+  tapPhotoSnap = null;
+  tapPoints = [];
+  document.getElementById('tapCamArea').style.display = 'block';
+  document.getElementById('tapCountArea').style.display = 'none';
+  document.getElementById('btnTapCapture').style.display = '';
+  document.getElementById('btnTapRetake').style.display = 'none';
+  startTapCam();
+}
+
+function redrawTapCanvas() {
+  const canvas = document.getElementById('tapPhotoCanvas');
+  if (!tapPhotoSnap) return;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(tapPhotoSnap, 0, 0);
+
+  const rad = Math.max(18, canvas.width * 0.022);
+  tapPoints.forEach((pt, i) => {
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(211,84,0,0.85)';
+    ctx.fill();
+    ctx.lineWidth = Math.max(3, rad * 0.15);
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.round(rad)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), pt.x, pt.y);
+  });
+
+  document.getElementById('tapCountBadge').textContent = tapPoints.length;
+}
+
+function addTapCountToList() {
+  const qty = tapPoints.length;
+  if (!qty) return toast('還沒點任何商品');
+  const pid = parseInt(document.getElementById('tapProductSelect').value);
+  const p = allProducts.find(x => x.id === pid);
+  if (!p) return toast('請選擇品項');
+
+  if (scanned[pid]) {
+    scanned[pid].qty += qty;
+  } else {
+    scanned[pid] = { name: p.name, qty, expiry: '', barcode: p.barcode || '' };
+  }
+
+  renderScanList();
+  if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
+  toast(`${p.name} +${qty}（可繼續點下一個品項）`);
+
+  // 保留照片，清空計數，方便接著點下一個品項
+  tapPoints = [];
+  redrawTapCanvas();
+}
+
+function closeTapCount() {
+  if (tapCamStream) { tapCamStream.getTracks().forEach(t => t.stop()); tapCamStream = null; }
+  closeModal('tapCountModal');
+  tapPhotoSnap = null;
+  tapPoints = [];
 }
 
 // ====== 掃碼盤點 Tab ======
@@ -622,6 +773,20 @@ async function saveRecord() {
     savedAt: new Date().toISOString()
   };
 
+  // 修改模式：更新原紀錄，不新增
+  if (editingRecordId) {
+    const existing = await dbGet('records', editingRecordId);
+    if (existing) {
+      await syncPut('records', { ...existing, ...record });
+      editingRecordId = null;
+      scanned = {};
+      renderScanList();
+      toast('紀錄已更新！');
+      return;
+    }
+    editingRecordId = null; // 原紀錄不存在，改走新增
+  }
+
   await syncAdd('records', record);
   toast('盤點紀錄已儲存！');
 }
@@ -780,9 +945,40 @@ async function renderHistory() {
     r.items.forEach(item => {
       h += `<div class="history-row"><span>${item.name}</span><span>${item.qty}${item.expiry ? ' | ' + item.expiry : ''}</span></div>`;
     });
+    h += `<div class="history-actions">
+      <button class="btn btn-sm btn-secondary" data-editrec="${r.id}">&#9998; 修改</button>
+      <button class="btn btn-sm btn-danger" data-delrec="${r.id}">刪除</button>
+    </div>`;
     h += '</div>';
   });
   el.innerHTML = h;
+
+  // 刪除紀錄
+  el.querySelectorAll('[data-delrec]').forEach(b => b.addEventListener('click', async () => {
+    const ok = await showConfirm('刪除紀錄', '確定刪除這筆盤點紀錄嗎？此操作無法復原。');
+    if (!ok) return;
+    await syncDelete('records', parseInt(b.dataset.delrec));
+    renderHistory();
+    toast('紀錄已刪除');
+  }));
+
+  // 修改紀錄：載回掃碼盤點頁調整後再儲存
+  el.querySelectorAll('[data-editrec]').forEach(b => b.addEventListener('click', () => {
+    const r = records.find(x => x.id === parseInt(b.dataset.editrec));
+    if (!r) return;
+    editingRecordId = r.id;
+    document.getElementById('checkDate').value = r.date;
+    scanned = {};
+    r.items.forEach(i => {
+      let pid = i.productId;
+      if (!pid) { const p = allProducts.find(x => x.name === i.name); pid = p ? p.id : null; }
+      if (!pid) return;
+      scanned[pid] = { name: i.name, qty: i.qty, expiry: i.expiry || '', barcode: i.barcode || '' };
+    });
+    renderScanList();
+    document.querySelector('.tab-btn[data-tab="scan"]').click();
+    toast('已載入 ' + r.date + ' 的紀錄，修改後按右下角儲存鍵更新');
+  }));
 }
 
 // ====== 設定 ======

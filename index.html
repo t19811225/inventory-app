@@ -55,6 +55,7 @@
     <div class="scan-actions">
       <button class="btn btn-primary" id="scanToggle">開啟掃碼</button>
       <button class="btn btn-secondary" id="btnTogglePicker">選擇品項</button>
+      <button class="btn btn-ai" id="btnTapCount">&#128248; 拍照點數</button>
     </div>
     <div class="manual-row">
       <input type="text" id="manualBarcode" placeholder="手動輸入條碼..." inputmode="numeric">
@@ -284,6 +285,37 @@
 </div>
 
 <canvas id="ocrCanvas" style="display:none;"></canvas>
+
+<!-- 拍照點數 Modal -->
+<div class="modal-bg" id="tapCountModal">
+  <div class="modal">
+    <h3>&#128248; 拍照點數</h3>
+    <div id="tapCamArea">
+      <video id="tapCamPreview" autoplay playsinline style="width:100%;border-radius:10px;background:#000;max-height:300px;object-fit:cover;"></video>
+      <div class="ocr-hint">將相機對準貨架，拍一張清楚的照片</div>
+    </div>
+    <div id="tapCountArea" style="display:none;">
+      <div class="tap-product-row">
+        <select id="tapProductSelect"></select>
+        <span class="tap-count-badge" id="tapCountBadge">0</span>
+      </div>
+      <div class="tap-photo-wrap">
+        <canvas id="tapPhotoCanvas"></canvas>
+      </div>
+      <div class="ocr-hint">在照片上逐一點擊該商品，點一下數量加 1</div>
+      <div class="tap-actions">
+        <button class="btn btn-sm btn-secondary" id="btnTapUndo">&#8617; 撤銷</button>
+        <button class="btn btn-sm btn-secondary" id="btnTapClear">清除</button>
+        <button class="btn btn-sm btn-success" id="btnTapAdd">&#10003; 加入清單</button>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" id="btnCloseTapCount">關閉</button>
+      <button class="btn btn-primary" id="btnTapCapture">拍照</button>
+      <button class="btn btn-secondary" id="btnTapRetake" style="display:none;">重拍</button>
+    </div>
+  </div>
+</div>
 
 <!-- 登入畫面 -->
 <div id="loginScreen" class="login-screen" style="display:none;">

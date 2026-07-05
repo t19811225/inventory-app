@@ -108,6 +108,35 @@ async function firebaseRemove(path) {
   }
 }
 
+// 盤點紀錄採「合併」而非覆蓋：
+// 保留尚未上傳的本地紀錄（沒有 _fbKey 的），避免離線期間存的紀錄被雲端蓋掉
+let mergingRecords = false;
+async function mergeRecordsFromCloud(cloudRecords) {
+  if (mergingRecords) return;
+  mergingRecords = true;
+  try {
+    const local = await dbGetAll('records');
+    const localOnly = local.filter(r => !r._fbKey);
+
+    await dbClear('records');
+    for (const [key, val] of Object.entries(cloudRecords)) {
+      await dbPut('records', { ...val, _fbKey: key });
+    }
+
+    // 把本地未上傳的紀錄補回來，並上傳到雲端
+    for (const r of localOnly) {
+      const copy = { ...r };
+      delete copy.id;
+      delete copy._fbKey;
+      const newId = await dbAdd('records', copy);
+      const key = await firebasePush('records', { ...copy, id: newId });
+      if (key) await dbPut('records', { ...copy, id: newId, _fbKey: key });
+    }
+  } finally {
+    mergingRecords = false;
+  }
+}
+
 // 從 Firebase 同步所有資料到 IndexedDB
 async function syncFromFirebase() {
   if (!userDbRef) return;
@@ -138,13 +167,8 @@ async function syncFromFirebase() {
           await dbPut('clients', { ...val, _fbKey: key });
         }
       }
-      // 同步盤點紀錄
-      if (data.records) {
-        await dbClear('records');
-        for (const [key, val] of Object.entries(data.records)) {
-          await dbPut('records', { ...val, _fbKey: key });
-        }
-      }
+      // 同步盤點紀錄（合併，不覆蓋本地未上傳的紀錄）
+      await mergeRecordsFromCloud(data.records || {});
 
       // 重新載入全域資料
       allRegions = await dbGetAll('regions');
@@ -202,8 +226,15 @@ function attachListeners() {
     const ref = userDbRef.child(store);
     const listener = ref.on('value', async snapshot => {
       const data = snapshot.val();
-      if (!data) return;
 
+      if (store === 'records') {
+        // 紀錄用合併，避免蓋掉尚未上傳的本地紀錄
+        await mergeRecordsFromCloud(data || {});
+        updateSyncStatus('已同步');
+        return;
+      }
+
+      if (!data) return;
       await dbClear(store);
       for (const [key, val] of Object.entries(data)) {
         await dbPut(store, { ...val, _fbKey: key });
