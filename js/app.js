@@ -269,6 +269,22 @@ function initModals() {
   document.getElementById('btnCloseExpiryCam').addEventListener('click', closeExpiryCam);
   document.getElementById('btnConfirmOCR').addEventListener('click', confirmOCR);
 
+  // 效期快速手動輸入（反光拍不到時用）
+  const applyManualExpiry = () => {
+    const v = document.getElementById('manualExpiryInput').value.trim();
+    if (!v) return;
+    const dateVal = parseQuickExpiry(v);
+    if (!dateVal) return toast('格式無法辨識，例：270326 代表 2027/03/26');
+    if (expiryTarget && scanned[expiryTarget]) {
+      scanned[expiryTarget].expiry = dateVal;
+      renderScanList();
+      toast('效期已設定：' + dateVal.replace(/-/g, '/'));
+    }
+    closeExpiryCam();
+  };
+  document.getElementById('btnManualExpiry').addEventListener('click', applyManualExpiry);
+  document.getElementById('manualExpiryInput').addEventListener('keypress', e => { if (e.key === 'Enter') applyManualExpiry(); });
+
   // 儲存盤點
   document.getElementById('btnSaveRecord').addEventListener('click', saveRecord);
 }
@@ -638,10 +654,49 @@ function openExpiryCam(pid) {
   // 確保 OCR 已載入
   initOCR();
   openModal('expiryCamModal');
+  document.getElementById('manualExpiryInput').value = '';
   const video = document.getElementById('expiryCamPreview');
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
-    .then(stream => { expiryCamStream = stream; video.srcObject = stream; })
+    .then(stream => {
+      expiryCamStream = stream;
+      video.srcObject = stream;
+      // 亮面反光：支援的話自動調降曝光，避免字被反光洗白
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.exposureCompensation) {
+          const target = Math.max(caps.exposureCompensation.min, -1);
+          track.applyConstraints({ advanced: [{ exposureCompensation: target }] }).catch(() => {});
+        }
+      } catch (e) {}
+    })
     .catch(() => toast('無法開啟相機'));
+}
+
+// 快速手動輸入效期：支援 270326 / 20270326 / 2027/03/26 等格式
+function parseQuickExpiry(raw) {
+  const digits = raw.replace(/\D/g, '');
+  let yr, mo, dy;
+  if (digits.length === 6) {        // 270326 → 2027-03-26
+    yr = 2000 + parseInt(digits.slice(0, 2));
+    mo = parseInt(digits.slice(2, 4));
+    dy = parseInt(digits.slice(4, 6));
+  } else if (digits.length === 8) { // 20270326
+    yr = parseInt(digits.slice(0, 4));
+    mo = parseInt(digits.slice(4, 6));
+    dy = parseInt(digits.slice(6, 8));
+  } else if (digits.length === 4) { // 2703 → 2027-03-01（只有年月）
+    yr = 2000 + parseInt(digits.slice(0, 2));
+    mo = parseInt(digits.slice(2, 4));
+    dy = 1;
+  } else {
+    const d = extractDate(raw);
+    return d ? d.value : null;
+  }
+  if (yr >= 2024 && yr <= 2035 && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+    return `${yr}-${String(mo).padStart(2, '0')}-${String(dy).padStart(2, '0')}`;
+  }
+  return null;
 }
 
 // 影像前處理：放大 + 灰階 + 對比拉伸，改善反光/低對比的辨識率
@@ -698,20 +753,31 @@ async function captureExpiry() {
   confirmBtn.style.display = 'none';
 
   try {
-    // 裁剪中央區域提高速度和準確度
-    const cropCanvas = document.createElement('canvas');
-    const cw = canvas.width, ch = canvas.height;
-    cropCanvas.width = cw * 0.8;
-    cropCanvas.height = ch * 0.4;
-    cropCanvas.getContext('2d').drawImage(canvas, cw*0.1, ch*0.3, cw*0.8, ch*0.4, 0, 0, cropCanvas.width, cropCanvas.height);
-
     if (!ocrWorker) await initOCR();
 
-    // 反光/低對比包裝：依序嘗試「對比強化 → 原圖 → 反相」直到抓到日期
+    // 連拍 3 張：反光位置會隨手部微晃移動，多張輪流辨識提高命中率
+    const cw = canvas.width, ch = canvas.height;
+    const grabCrop = () => {
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const crop = document.createElement('canvas');
+      crop.width = cw * 0.8;
+      crop.height = ch * 0.4;
+      crop.getContext('2d').drawImage(canvas, cw*0.1, ch*0.3, cw*0.8, ch*0.4, 0, 0, crop.width, crop.height);
+      return crop;
+    };
+    const frames = [grabCrop()];
+    for (let f = 1; f < 3; f++) {
+      await new Promise(r => setTimeout(r, 350));
+      frames.push(grabCrop());
+    }
+
+    // 每張先試「對比強化」，最後再試第一張的原圖與反相
     const attempts = [
-      preprocessForOCR(cropCanvas, false),
-      cropCanvas,
-      preprocessForOCR(cropCanvas, true)
+      preprocessForOCR(frames[0], false),
+      preprocessForOCR(frames[1], false),
+      preprocessForOCR(frames[2], false),
+      frames[0],
+      preprocessForOCR(frames[0], true)
     ];
 
     let dateStr = null, lastText = '';

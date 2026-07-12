@@ -274,6 +274,10 @@
     <video id="expiryCamPreview" autoplay playsinline></video>
     <div class="ocr-result" id="ocrResult">等待拍照...</div>
     <div class="ocr-hint">將相機對準效期日期，點擊「拍照辨識」<br>反光包裝：斜一點角度、避開燈光直射效果更好</div>
+    <div class="manual-row" style="margin-top:8px;">
+      <input type="text" id="manualExpiryInput" placeholder="或直接輸入效期：270326" inputmode="numeric">
+      <button class="btn btn-sm btn-primary" id="btnManualExpiry">使用</button>
+    </div>
     <div class="modal-btns">
       <button class="btn btn-secondary" id="btnCloseExpiryCam">取消</button>
       <button class="btn btn-primary" id="btnCaptureExpiry">拍照辨識</button>
