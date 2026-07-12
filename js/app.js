@@ -395,8 +395,13 @@ function addTapCountToList() {
   const p = allProducts.find(x => x.id === pid);
   if (!p) return toast('請選擇品項');
 
-  // 建立新的一筆，與掃碼一致（支援同品項不同效期/數量）
-  scanned[nextEntryId++] = { productId: p.id, name: p.name, qty, expiry: '', barcode: p.barcode || '' };
+  // 同品項且尚未填效期 → 合併數量；已填效期的批次另立新筆
+  const existing = Object.values(scanned).find(s => s.productId === p.id && !s.expiry);
+  if (existing) {
+    existing.qty += qty;
+  } else {
+    scanned[nextEntryId++] = { productId: p.id, name: p.name, qty, expiry: '', barcode: p.barcode || '' };
+  }
 
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
@@ -497,11 +502,18 @@ function addItemById(productId) {
   if (!activeClientId) return toast('請先選擇客戶');
   const p = allProducts.find(x => x.id === productId);
   if (!p) return;
-  // 每次新增都建立新的一筆，支援同品項不同效期/數量
-  scanned[nextEntryId++] = { productId: p.id, name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
+  // 同品項且尚未填效期 → 合併數量，避免清單重複多筆；
+  // 已填效期的批次不合併（保留同品項多批效期功能）
+  const existing = Object.values(scanned).find(s => s.productId === p.id && !s.expiry);
+  if (existing) {
+    existing.qty += 1;
+    toast(p.name + ' 數量 +1（共 ' + existing.qty + '）');
+  } else {
+    scanned[nextEntryId++] = { productId: p.id, name: p.name, qty: 5, expiry: '', barcode: p.barcode || '' };
+    toast('+ ' + p.name);
+  }
   renderScanList();
   if (pickerOpen) renderProductGrid(document.getElementById('productSearchInPicker').value);
-  toast('+ ' + p.name);
 }
 
 function addItemByBarcode(code) {
@@ -627,9 +639,48 @@ function openExpiryCam(pid) {
   initOCR();
   openModal('expiryCamModal');
   const video = document.getElementById('expiryCamPreview');
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
     .then(stream => { expiryCamStream = stream; video.srcObject = stream; })
     .catch(() => toast('無法開啟相機'));
+}
+
+// 影像前處理：放大 + 灰階 + 對比拉伸，改善反光/低對比的辨識率
+function preprocessForOCR(srcCanvas, invert) {
+  const c = document.createElement('canvas');
+  c.width = srcCanvas.width * 2;
+  c.height = srcCanvas.height * 2;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(srcCanvas, 0, 0, c.width, c.height);
+
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  const n = d.length / 4;
+
+  // 灰階 + 直方圖
+  const gray = new Uint8Array(n);
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) {
+    const g = (d[i*4] * 0.299 + d[i*4+1] * 0.587 + d[i*4+2] * 0.114) | 0;
+    gray[i] = g;
+    hist[g]++;
+  }
+
+  // 取 5%~95% 範圍做對比拉伸（把反光造成的偏白/偏灰拉開）
+  let lo = 0, hi = 255, acc = 0;
+  for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.05) { lo = i; break; } }
+  acc = 0;
+  for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.05) { hi = i; break; } }
+  const range = Math.max(1, hi - lo);
+
+  for (let i = 0; i < n; i++) {
+    let v = ((gray[i] - lo) * 255 / range) | 0;
+    v = Math.max(0, Math.min(255, v));
+    if (invert) v = 255 - v;
+    d[i*4] = d[i*4+1] = d[i*4+2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 async function captureExpiry() {
@@ -654,13 +705,22 @@ async function captureExpiry() {
     cropCanvas.height = ch * 0.4;
     cropCanvas.getContext('2d').drawImage(canvas, cw*0.1, ch*0.3, cw*0.8, ch*0.4, 0, 0, cropCanvas.width, cropCanvas.height);
 
-    // 使用預載的 OCR worker
     if (!ocrWorker) await initOCR();
-    const { data } = await ocrWorker.recognize(cropCanvas);
 
-    const text = data.text;
-    // 嘗試從辨識文字中提取日期
-    const dateStr = extractDate(text);
+    // 反光/低對比包裝：依序嘗試「對比強化 → 原圖 → 反相」直到抓到日期
+    const attempts = [
+      preprocessForOCR(cropCanvas, false),
+      cropCanvas,
+      preprocessForOCR(cropCanvas, true)
+    ];
+
+    let dateStr = null, lastText = '';
+    for (const attempt of attempts) {
+      const { data } = await ocrWorker.recognize(attempt);
+      lastText = data.text || lastText;
+      dateStr = extractDate(data.text);
+      if (dateStr) break;
+    }
 
     if (dateStr) {
       result.textContent = dateStr.display;
@@ -668,11 +728,11 @@ async function captureExpiry() {
       result.dataset.date = dateStr.value;
       confirmBtn.style.display = 'flex';
     } else {
-      result.textContent = '未能辨識日期，請重試';
+      result.textContent = '未能辨識日期，請重試（反光包裝可斜一點角度避開反光）';
       result.style.color = 'var(--danger)';
       // 顯示原始辨識文字供參考
-      if (text.trim()) {
-        result.textContent += '\n辨識到: ' + text.trim().substring(0, 50);
+      if (lastText.trim()) {
+        result.textContent += '\n辨識到: ' + lastText.trim().substring(0, 50);
       }
     }
   } catch (e) {
@@ -793,6 +853,37 @@ async function saveRecord() {
       return;
     }
     editingRecordId = null; // 原紀錄不存在，改走新增
+  }
+
+  // 同客戶同一天只保留一筆：
+  // 這次盤過的品項用新資料覆蓋，沒重盤的品項保留，多餘的同日紀錄自動刪除
+  const sameDay = (await dbGetByIndex('records', 'clientId', activeClientId))
+    .filter(r => r.date === date)
+    .sort((a, b) => (a.id || 0) - (b.id || 0));
+
+  if (sameDay.length) {
+    const base = sameDay[0];
+    const newPids = new Set(items.map(i => i.productId));
+    const kept = [];
+    const seen = new Set();
+    sameDay.forEach(rec => {
+      rec.items.forEach(i => {
+        if (newPids.has(i.productId)) return; // 這次重盤過 → 用新的
+        const key = i.productId + '|' + (i.expiry || '');
+        if (seen.has(key)) return;
+        seen.add(key);
+        kept.push(i);
+      });
+    });
+    const mergedItems = [...kept, ...items];
+    await syncPut('records', {
+      ...base, ...record,
+      items: mergedItems,
+      totalQty: mergedItems.reduce((s, i) => s + i.qty, 0)
+    });
+    for (const extra of sameDay.slice(1)) await syncDelete('records', extra.id);
+    toast('已併入今日紀錄！');
+    return;
   }
 
   await syncAdd('records', record);
